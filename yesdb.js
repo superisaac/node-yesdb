@@ -1,3 +1,10 @@
+/**
+ * node-yesdb: nodejs implementation of bitcask log-based key-value storage
+ * Author: Zeng Ke
+ * Email: superisaac.ke@gmail.com
+ * 
+ * node-yesdb is licensed under MIT license
+ */
 var fs = require('fs');
 var EventEmitter = require('events').EventEmitter
 
