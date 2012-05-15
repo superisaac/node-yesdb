@@ -38,7 +38,6 @@ console.log('This statement should be executed before db operations');
 
 * collect data files to reduce the number
 * hint files
-* delete key
 * others ....
 
 
