@@ -52,11 +52,13 @@ function createItemStream(filename) {
     var stream = createLineStream(filename);
     stream.on('line', function (line, pos) {
 	    line = line.trim();
-	    var tabIndex = line.indexOf('\t');
-	    if(tabIndex >= 0) {
-		var k = line.substr(0, tabIndex).trim();
-		var v = line.substr(tabIndex + 1).trim();
-		stream.emit('item', k, v, pos);
+	    var items = line.split('\t', 3);
+	    var num = parseInt(items[1]);
+	    // TODO: vanity check num
+	    if(num == 0) {
+		stream.emit('delitem', items[0], pos);
+	    } else {
+		stream.emit('item', items[0], items[2], pos);
 	    }
 	});
     return stream;
@@ -135,6 +137,10 @@ function opendb(dbpath, opts) {
 	stream.on('item', function (k, v, pos) {
 		cache[k] = [datafile, pos];
 	    });
+
+	stream.on('delitem', function (k, pos) {
+		delete cache[k];
+	    });
 	
 	stream.on('error', function (err) {
 		console.error(err);
@@ -181,7 +187,13 @@ function opendb(dbpath, opts) {
 	fnok = fnok || function () {};
 	ready(function (as_hook) {
 		function writeItem(fd) {
-		    var s = encodeURIComponent(key) + '\t' + encodeURIComponent(value) + '\n';
+		    var evlen = 0;
+		    var ev = '';			
+		    if(value != undefined && value != null) {
+			ev = JSON.stringify(value);
+			evlen = Buffer.byteLength(ev, 'utf-8');
+		    }
+		    var s = encodeURIComponent(key) + '\t' + evlen + '\t' + ev + '\n';
 		    var lens = Buffer.byteLength(s);
 		    var buf = new Buffer(s);
 		    cache[key] = [curr_filename, curr_pos];
@@ -238,7 +250,11 @@ function opendb(dbpath, opts) {
 			ready_evt.emit('hookReady');
 		    }
 		} else {
-		    readItem(pos, function( k, v) {
+		    readItem(pos, function(err, k, v) {
+			    if(err) {
+				fnok(err, null);
+				return;
+			    }
 			    fnok(null, v);
 			    if(as_hook) {
 				ready_evt.emit('hookReady');
@@ -253,18 +269,37 @@ function opendb(dbpath, opts) {
 	var pos = filepos[1];
 	function readLine(fd) {
 	    // TODO: make the size adaptable.
-	    var buffer = new Buffer(10240);
+	    var buffer = new Buffer(1024);
 	    fs.read(fd, buffer, 0, 1024, pos, function (err, bytesRead) {
 		    var s = buffer.toString('utf-8', 0, bytesRead);
-		    var lfIndex = s.indexOf('\n');
-		    if(lfIndex >= 0) {
-			var line = s.substr(0, lfIndex);
-			var tabIndex = line.indexOf('\t');
-			if(tabIndex) {
-			    var key = decodeURIComponent(line.substr(0, tabIndex).trim());
-			    var value = decodeURIComponent(line.substr(tabIndex + 1).trim());
-			    callback(key, value);
+		    var keyEndIndex = s.indexOf('\t');
+		    if(keyEndIndex >= 0) {
+			var key = decodeURIComponent(s.substr(0, keyEndIndex).trim());
+			keyEndIndex++;
+			var numIndex = s.indexOf('\t', keyEndIndex);
+			if(numIndex < 0) {
+			    callback('Illegal item position, cannot find number');
+			    return;
 			}
+			var num = parseInt(s.substr(keyEndIndex, numIndex - keyEndIndex), 10);
+			if(isNaN(num) || num < 0) {
+			    callback('Illegal item, malformed num');
+			    return
+			}
+			if(num == 0) {
+			    callback('notfound');
+			    return;
+			}
+			var buf = new Buffer(num + 1);
+			fs.read(fd, buf, 0, num + 1, pos + numIndex + 1, function (err, br) {
+				var value = buf.toString('utf-8', 0, br - 1);
+				// TODO: assert buf[br] = '\n';
+				//value = decodeURIComponent(value);
+				value = JSON.parse(value);
+				callback(null, key, value);
+			    });
+		    } else {
+			callback('Illegal item position, cannot find key');
 		    }
 		}); 
 	}
@@ -278,8 +313,15 @@ function opendb(dbpath, opts) {
 	    readLine(fd);
 	}
     }
+
+    instance.delete = function (key, fnok) {
+	return instance.set(key, undefined, function () {
+		delete cache[key];
+		typeof fnok == 'function' && fnok();
+	    });
+    };
+
     initialize();
-    // TODO: instance.delete
     return instance;
 }
 
